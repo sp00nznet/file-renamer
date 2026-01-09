@@ -16,13 +16,25 @@ A bash script that renames movie and TV show files using metadata from [TMDB](ht
 
 2. Get a free API key at https://www.themoviedb.org/settings/api
 
-3. Run:
+3. Run the interactive launcher:
    ```bash
-   chmod +x file_renamer.sh
+   ./rename.sh
+   ```
+
+   Or run directly:
+   ```bash
    ./file_renamer.sh -k YOUR_API_KEY /path/to/media
    ```
 
-## Usage
+## Interactive Mode
+
+Run `./rename.sh` for a guided experience that will prompt you for:
+- Media type (Movies, TV Shows, or Auto-detect)
+- Target directory
+- Dry run option
+- Logging preferences
+
+## Command Line Usage
 
 ```bash
 ./file_renamer.sh [options] [directory]
@@ -32,19 +44,16 @@ A bash script that renames movie and TV show files using metadata from [TMDB](ht
 |--------|-------------|
 | `-h` | Show help |
 | `-k KEY` | Set TMDB API key |
+| `-m MODE` | Mode: `movies`, `tv`, or `auto` (default) |
 | `-d` | Dry run (preview only) |
 | `-l FILE` | Log operations to file |
 
 **Examples:**
 ```bash
-./file_renamer.sh /path/to/media                    # Basic usage
-./file_renamer.sh -d /path/to/media                 # Preview changes
-./file_renamer.sh -l rename.log /path/to/media      # With logging
-```
-
-You can also set the API key via environment variable:
-```bash
-export TMDB_API_KEY=your_key
+./file_renamer.sh /path/to/media              # Auto-detect
+./file_renamer.sh -m movies /path/to/media    # Movies only
+./file_renamer.sh -m tv /path/to/media        # TV shows only
+./file_renamer.sh -d /path/to/media           # Preview changes
 ```
 
 ## Supported Formats

@@ -187,6 +187,7 @@ show_usage() {
     echo "  -k, --key KEY    Set TMDB API key"
     echo "  -d, --dry-run    Show what would be renamed without making changes"
     echo "  -l, --log FILE   Enable logging to specified file"
+    echo "  -m, --mode MODE  Force mode: 'movies', 'tv', or 'auto' (default: auto)"
     echo ""
     echo "Environment Variables:"
     echo "  TMDB_API_KEY     Your TMDB API key (or use -k flag)"
@@ -195,14 +196,11 @@ show_usage() {
     echo "  Movies:    Movie Name (Year).ext"
     echo "  TV Shows:  Show Name - S01E02 - Episode Title.ext"
     echo ""
-    echo "Supported Patterns:"
-    echo "  TV Shows:  S01E02, 1x02, Season.1.Episode.2"
-    echo "  Movies:    Any video file without TV patterns"
-    echo ""
     echo "Examples:"
-    echo "  $0 /path/to/media"
-    echo "  $0 -k your_key -l rename.log /path/to/media"
-    echo "  $0 -d /path/to/media   # Preview only"
+    echo "  $0 /path/to/media              # Auto-detect movies vs TV"
+    echo "  $0 -m movies /path/to/media    # Treat all as movies"
+    echo "  $0 -m tv /path/to/media        # Treat all as TV shows"
+    echo "  $0 -d /path/to/media           # Preview only"
     echo ""
     echo "Get a free TMDB API key at: https://www.themoviedb.org/settings/api"
 }
@@ -777,6 +775,7 @@ process_movie_file() {
 # Parse arguments
 DRY_RUN="false"
 TARGET_DIR=""
+MODE="auto"
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -795,6 +794,14 @@ while [[ $# -gt 0 ]]; do
         -l|--log)
             LOG_FILE="$2"
             LOG_ENABLED="true"
+            shift 2
+            ;;
+        -m|--mode)
+            MODE="$2"
+            if [[ ! "$MODE" =~ ^(auto|movies|tv)$ ]]; then
+                echo -e "${RED}Error: Invalid mode '$MODE'. Use 'auto', 'movies', or 'tv'${NC}"
+                exit 1
+            fi
             shift 2
             ;;
         *)
@@ -841,8 +848,9 @@ echo -e "${CYAN}║              Media Renamer - TMDB Edition                   
 echo -e "${CYAN}╚═══════════════════════════════════════════════════════════════╝${NC}"
 echo ""
 echo -e "${BLUE}Target directory:${NC} $TARGET_DIR"
+echo -e "${BLUE}Mode:${NC} $MODE"
 if [ "$DRY_RUN" = "true" ]; then
-    echo -e "${YELLOW}Mode: DRY RUN (no changes will be made)${NC}"
+    echo -e "${YELLOW}DRY RUN (no changes will be made)${NC}"
 fi
 if [ "$LOG_ENABLED" = "true" ]; then
     echo -e "${BLUE}Logging to:${NC} $LOG_FILE"
@@ -858,19 +866,49 @@ while IFS= read -r -d '' file; do
     ((file_count++))
     filename=$(basename "$file")
 
-    # Check if it's a TV show (has season/episode pattern)
-    tv_info=$(detect_tv_show "$filename")
-    if [ $? -eq 0 ] && [ -n "$tv_info" ]; then
-        # It's a TV show
-        show_name=$(echo "$tv_info" | cut -d'|' -f1)
-        season=$(echo "$tv_info" | cut -d'|' -f2)
-        episode=$(echo "$tv_info" | cut -d'|' -f3)
+    # Determine how to process based on mode
+    if [ "$MODE" = "movies" ]; then
+        # Force movie mode
+        process_movie_file "$file" "$DRY_RUN"
+        ((movie_count++))
+    elif [ "$MODE" = "tv" ]; then
+        # Force TV mode - try to detect season/episode, prompt if not found
+        tv_info=$(detect_tv_show "$filename")
+        if [ $? -eq 0 ] && [ -n "$tv_info" ]; then
+            show_name=$(echo "$tv_info" | cut -d'|' -f1)
+            season=$(echo "$tv_info" | cut -d'|' -f2)
+            episode=$(echo "$tv_info" | cut -d'|' -f3)
+        else
+            # Can't detect pattern, ask user
+            echo ""
+            echo -e "${CYAN}═══════════════════════════════════════════════════════════════${NC}"
+            echo -e "${YELLOW}Cannot detect season/episode for:${NC} $filename"
+            echo -e "Enter show name (or 's' to skip): "
+            read -r show_name
+            if [ "$show_name" = "s" ] || [ -z "$show_name" ]; then
+                echo -e "${YELLOW}Skipping file${NC}"
+                continue
+            fi
+            echo -e "Enter season number: "
+            read -r season
+            echo -e "Enter episode number: "
+            read -r episode
+        fi
         process_tv_file "$file" "$DRY_RUN" "$show_name" "$season" "$episode"
         ((tv_count++))
     else
-        # It's a movie
-        process_movie_file "$file" "$DRY_RUN"
-        ((movie_count++))
+        # Auto mode - detect based on filename pattern
+        tv_info=$(detect_tv_show "$filename")
+        if [ $? -eq 0 ] && [ -n "$tv_info" ]; then
+            show_name=$(echo "$tv_info" | cut -d'|' -f1)
+            season=$(echo "$tv_info" | cut -d'|' -f2)
+            episode=$(echo "$tv_info" | cut -d'|' -f3)
+            process_tv_file "$file" "$DRY_RUN" "$show_name" "$season" "$episode"
+            ((tv_count++))
+        else
+            process_movie_file "$file" "$DRY_RUN"
+            ((movie_count++))
+        fi
     fi
 done < <(find "$TARGET_DIR" -maxdepth 1 -type f -regextype posix-extended -iregex ".*\.($VIDEO_EXTENSIONS)$" -print0 | sort -z)
 
