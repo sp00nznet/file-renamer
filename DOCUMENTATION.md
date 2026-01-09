@@ -34,9 +34,20 @@ Any video file without TV show patterns is treated as a movie.
 | `The.Matrix.1999.BluRay.1080p.x264.mkv` | `The Matrix (1999).mkv` |
 | `Inception.2010.REMASTERED.720p.mkv` | `Inception (2010).mkv` |
 
+### Music
+
+Audio files are searched on MusicBrainz by their filename.
+
+| Input | Output |
+|-------|--------|
+| `01 - Bohemian Rhapsody.mp3` | `Queen - Bohemian Rhapsody.mp3` |
+| `led_zeppelin_stairway_to_heaven.flac` | `Led Zeppelin - Stairway to Heaven.flac` |
+
 ## Stripped Indicators
 
-The script automatically removes these from filenames before searching TMDB:
+The script automatically removes these from filenames before searching:
+
+### Video Files (TMDB)
 
 | Category | Examples |
 |----------|----------|
@@ -47,13 +58,22 @@ The script automatically removes these from filenames before searching TMDB:
 | **Release** | Proper, Repack, Extended, Unrated, Remastered |
 | **Groups** | YIFY, YTS, RARBG, EZTV, and many others |
 
+### Audio Files (MusicBrainz)
+
+| Category | Examples |
+|----------|----------|
+| **Track Numbers** | 01, 02., 1 - |
+| **Quality** | 320kbps, 256kbps, 192kbps, 128kbps |
+| **Format Tags** | flac, mp3, lossless, CD, vinyl |
+| **Brackets** | [2019], (Remastered), [Deluxe Edition] |
+
 ## Interactive Workflow
 
-1. The script scans the target directory for video files
+1. The script scans the target directory for media files
 2. For each file:
-   - Detects if it's a movie or TV show
-   - Searches TMDB for matches
-   - Displays up to 5 results with ratings and descriptions
+   - Identifies file type (video or audio)
+   - Searches the appropriate API (TMDB or MusicBrainz)
+   - Displays up to 5 results with metadata
    - Prompts for selection:
      - `1-5`: Select a match
      - `n`: Perform a new search
@@ -82,6 +102,9 @@ Dry Run: false
 [2024-01-15 14:30:23] [INFO] Processing movie file: The.Matrix.1999.mkv
 [2024-01-15 14:30:24] [INFO] User selected: The Matrix (1999)
 [2024-01-15 14:30:24] [SUCCESS] Renamed: The.Matrix.1999.mkv -> The Matrix (1999).mkv
+[2024-01-15 14:30:25] [INFO] Processing music file: bohemian_rhapsody.mp3
+[2024-01-15 14:30:26] [INFO] User selected: Queen - Bohemian Rhapsody
+[2024-01-15 14:30:26] [SUCCESS] Renamed: bohemian_rhapsody.mp3 -> Queen - Bohemian Rhapsody.mp3
 ```
 
 ## Tips
@@ -91,17 +114,20 @@ Dry Run: false
 - Use logging (`-l`) to keep a record of changes
 - If automatic detection fails, you can enter a custom search term
 - The script only processes files in the immediate directory (not subdirectories)
+- **Music mode** doesn't require an API key - uses free MusicBrainz API
+- MusicBrainz has rate limiting (1 request/second), so music renaming is slower
 
 ## Troubleshooting
 
 ### "API Error: Invalid API key"
 - Verify your TMDB API key is correct
 - Check if the key is properly set via `-k` flag or `TMDB_API_KEY` environment variable
+- Note: Music mode (`-m music`) doesn't require an API key
 
 ### "No matches found"
 - Try entering a custom search term when prompted
-- Check if the movie/show title in the filename is spelled correctly
-- Some very new or obscure titles may not be in TMDB yet
+- Check if the title in the filename is spelled correctly
+- Some very new or obscure titles may not be in the database yet
 
 ### "Missing required dependencies"
 - Install curl and jq:
@@ -115,3 +141,7 @@ Dry Run: false
   # Fedora/RHEL
   sudo dnf install curl jq
   ```
+
+### Music searches are slow
+- MusicBrainz requires a 1-second delay between requests to prevent rate limiting
+- This is normal behavior and cannot be bypassed

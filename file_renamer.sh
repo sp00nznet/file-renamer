@@ -31,6 +31,9 @@ TMDB_API_KEY="${TMDB_API_KEY:-}"
 # Video file extensions to process
 VIDEO_EXTENSIONS="mkv|mp4|avi|mov|wmv|flv|webm|m4v|mpg|mpeg|ts|vob|divx|xvid"
 
+# Audio file extensions to process
+AUDIO_EXTENSIONS="mp3|flac|wav|aac|ogg|wma|m4a|opus|aiff|alac"
+
 # Logging configuration
 LOG_FILE=""
 LOG_ENABLED="false"
@@ -178,16 +181,16 @@ clean_show_name() {
 show_usage() {
     echo -e "${CYAN}Media Renamer Script${NC}"
     echo ""
-    echo "Renames movies and TV shows using TMDB metadata."
+    echo "Renames movies, TV shows, and music using online metadata."
     echo ""
     echo "Usage: $0 [options] [directory]"
     echo ""
     echo "Options:"
     echo "  -h, --help       Show this help message"
-    echo "  -k, --key KEY    Set TMDB API key"
+    echo "  -k, --key KEY    Set TMDB API key (for movies/TV)"
     echo "  -d, --dry-run    Show what would be renamed without making changes"
     echo "  -l, --log FILE   Enable logging to specified file"
-    echo "  -m, --mode MODE  Force mode: 'movies', 'tv', or 'auto' (default: auto)"
+    echo "  -m, --mode MODE  Mode: 'movies', 'tv', 'music', or 'auto' (default: auto)"
     echo ""
     echo "Environment Variables:"
     echo "  TMDB_API_KEY     Your TMDB API key (or use -k flag)"
@@ -195,14 +198,18 @@ show_usage() {
     echo "Output Formats:"
     echo "  Movies:    Movie Name (Year).ext"
     echo "  TV Shows:  Show Name - S01E02 - Episode Title.ext"
+    echo "  Music:     Artist - Track Title.ext"
     echo ""
     echo "Examples:"
-    echo "  $0 /path/to/media              # Auto-detect movies vs TV"
-    echo "  $0 -m movies /path/to/media    # Treat all as movies"
-    echo "  $0 -m tv /path/to/media        # Treat all as TV shows"
+    echo "  $0 /path/to/media              # Auto-detect based on file type"
+    echo "  $0 -m movies /path/to/media    # Rename movies only"
+    echo "  $0 -m tv /path/to/media        # Rename TV shows only"
+    echo "  $0 -m music /path/to/media     # Rename music only"
     echo "  $0 -d /path/to/media           # Preview only"
     echo ""
-    echo "Get a free TMDB API key at: https://www.themoviedb.org/settings/api"
+    echo "APIs Used:"
+    echo "  Movies/TV: TMDB (requires API key)"
+    echo "  Music:     MusicBrainz (no API key required)"
 }
 
 #-------------------------------------------------------------------------------
@@ -564,13 +571,276 @@ process_tv_file() {
 }
 
 #-------------------------------------------------------------------------------
+# Function: clean_music_filename
+# Extracts artist and track info from music filename
+#-------------------------------------------------------------------------------
+clean_music_filename() {
+    local filename="$1"
+
+    # Remove extension
+    local name="${filename%.*}"
+
+    # Replace common separators with spaces
+    name=$(echo "$name" | sed -E 's/[._-]+/ /g')
+
+    # Remove track numbers at start (01, 01., 1 -, etc.)
+    name=$(echo "$name" | sed -E 's/^[0-9]{1,3}[\.\-\s]*//g')
+
+    # Remove common quality/format tags
+    name=$(echo "$name" | sed -E 's/\b(320kbps|256kbps|192kbps|128kbps|flac|mp3|wav|aac|ogg|lossless|cd|vinyl|remaster|remastered)\b//gi')
+
+    # Remove brackets content often containing year or extra info
+    name=$(echo "$name" | sed -E 's/\[[^\]]*\]//g' | sed -E 's/\([^\)]*\)//g')
+
+    # Remove extra whitespace
+    name=$(echo "$name" | sed -E 's/\s+/ /g' | sed -E 's/^\s+|\s+$//g')
+
+    echo "$name"
+}
+
+#-------------------------------------------------------------------------------
+# Function: search_musicbrainz
+# Searches MusicBrainz for a recording
+#-------------------------------------------------------------------------------
+search_musicbrainz() {
+    local query="$1"
+
+    # URL encode the query
+    local encoded_query=$(echo "$query" | sed 's/ /%20/g' | sed "s/'/%27/g")
+
+    local url="https://musicbrainz.org/ws/2/recording?query=${encoded_query}&fmt=json&limit=5"
+
+    log_info "Searching MusicBrainz: $query"
+
+    # MusicBrainz requires a User-Agent header
+    local response=$(curl -s -A "MediaRenamer/1.0 (https://github.com/sp00nznet/file-renamer)" "$url")
+
+    # Check for errors
+    if echo "$response" | jq -e '.error' &> /dev/null; then
+        local error_msg=$(echo "$response" | jq -r '.error')
+        echo -e "${RED}API Error: $error_msg${NC}" >&2
+        log_error "MusicBrainz API Error: $error_msg"
+        return 1
+    fi
+
+    echo "$response"
+}
+
+#-------------------------------------------------------------------------------
+# Function: display_music_results
+# Shows music search results and prompts for selection
+#-------------------------------------------------------------------------------
+display_music_results() {
+    local response="$1"
+
+    local count=$(echo "$response" | jq '.recordings | length')
+
+    if [ "$count" -eq 0 ] || [ "$count" = "null" ]; then
+        return 1
+    fi
+
+    echo ""
+    echo -e "${CYAN}Found recordings:${NC}"
+    echo "----------------------------------------"
+
+    # Display up to 5 results
+    local max=$((count > 5 ? 5 : count))
+
+    for i in $(seq 0 $((max - 1))); do
+        local title=$(echo "$response" | jq -r ".recordings[$i].title")
+        local artist=$(echo "$response" | jq -r ".recordings[$i][\"artist-credit\"][0].name // \"Unknown Artist\"")
+        local album=$(echo "$response" | jq -r ".recordings[$i].releases[0].title // \"Unknown Album\"")
+        local year=$(echo "$response" | jq -r ".recordings[$i].releases[0].date // \"\"" | cut -d'-' -f1)
+        local score=$(echo "$response" | jq -r ".recordings[$i].score // 0")
+
+        echo -e "${YELLOW}[$((i + 1))]${NC} $title"
+        echo -e "    Artist: $artist"
+        echo -e "    Album: $album ${year:+($year)}"
+        echo -e "    Match: ${score}%"
+        echo ""
+    done
+
+    return 0
+}
+
+#-------------------------------------------------------------------------------
+# Function: get_music_filename
+# Creates the new filename in "Artist - Track Title.ext" format
+#-------------------------------------------------------------------------------
+get_music_filename() {
+    local artist="$1"
+    local title="$2"
+    local track_num="$3"
+    local extension="$4"
+
+    # Sanitize for filename
+    local safe_artist=$(echo "$artist" | sed -E 's/[<>:"/\\|?*]//g')
+    local safe_title=$(echo "$title" | sed -E 's/[<>:"/\\|?*]//g')
+
+    if [ -n "$track_num" ] && [ "$track_num" != "null" ]; then
+        local formatted_track=$(printf "%02d" $((10#$track_num)))
+        echo "${formatted_track}. ${safe_artist} - ${safe_title}.${extension}"
+    else
+        echo "${safe_artist} - ${safe_title}.${extension}"
+    fi
+}
+
+#-------------------------------------------------------------------------------
+# Function: process_music_file
+# Processes a music file for renaming
+#-------------------------------------------------------------------------------
+process_music_file() {
+    local filepath="$1"
+    local dry_run="$2"
+
+    local directory=$(dirname "$filepath")
+    local filename=$(basename "$filepath")
+    local extension="${filename##*.}"
+
+    echo ""
+    echo -e "${CYAN}═══════════════════════════════════════════════════════════════${NC}"
+    echo -e "${CYAN}Processing Music:${NC} $filename"
+    echo -e "${CYAN}═══════════════════════════════════════════════════════════════${NC}"
+
+    # Clean the filename for searching
+    local cleaned=$(clean_music_filename "$filename")
+
+    echo -e "${BLUE}Search query:${NC} $cleaned"
+
+    log_info "Processing music file: $filename"
+    log_info "Search query: $cleaned"
+
+    # Search MusicBrainz
+    echo -e "${BLUE}Searching MusicBrainz...${NC}"
+
+    # Rate limiting - MusicBrainz requires 1 request per second
+    sleep 1
+
+    local response=$(search_musicbrainz "$cleaned")
+
+    if [ $? -ne 0 ]; then
+        echo -e "${RED}Failed to search MusicBrainz${NC}"
+        log_error "Failed to search MusicBrainz for: $cleaned"
+        return 1
+    fi
+
+    # Display results
+    if ! display_music_results "$response"; then
+        echo -e "${YELLOW}No matches found on MusicBrainz${NC}"
+        log_warning "No matches found for: $cleaned"
+        echo -e "Enter a custom search term (or 's' to skip): "
+        read -r custom_search
+
+        if [ "$custom_search" = "s" ] || [ -z "$custom_search" ]; then
+            echo -e "${YELLOW}Skipping file${NC}"
+            log_info "Skipped: $filename (user choice)"
+            return 0
+        fi
+
+        sleep 1
+        response=$(search_musicbrainz "$custom_search")
+        if ! display_music_results "$response"; then
+            echo -e "${RED}Still no matches found. Skipping.${NC}"
+            log_warning "No matches found after custom search: $custom_search"
+            return 0
+        fi
+    fi
+
+    # Prompt for selection
+    local count=$(echo "$response" | jq '.recordings | length')
+    local max=$((count > 5 ? 5 : count))
+    echo -e "Select match [1-$max], 'n' for new search, 's' to skip: "
+    read -r selection
+
+    case "$selection" in
+        [1-5])
+            local idx=$((selection - 1))
+            local title=$(echo "$response" | jq -r ".recordings[$idx].title")
+            local artist=$(echo "$response" | jq -r ".recordings[$idx][\"artist-credit\"][0].name // \"Unknown Artist\"")
+
+            log_info "User selected: $artist - $title"
+
+            local new_filename=$(get_music_filename "$artist" "$title" "" "$extension")
+            local new_filepath="${directory}/${new_filename}"
+
+            echo ""
+            echo -e "${GREEN}Will rename:${NC}"
+            echo -e "  From: ${YELLOW}$filename${NC}"
+            echo -e "  To:   ${GREEN}$new_filename${NC}"
+            echo ""
+
+            # Check if file already has correct name
+            if [ "$filename" = "$new_filename" ]; then
+                echo -e "${GREEN}File already has the correct name!${NC}"
+                log_info "File already correctly named: $filename"
+                return 0
+            fi
+
+            # Check if destination exists
+            if [ -e "$new_filepath" ]; then
+                echo -e "${RED}Warning: Destination file already exists!${NC}"
+                echo -e "Overwrite? [y/N]: "
+                read -r overwrite
+                if [ "$overwrite" != "y" ] && [ "$overwrite" != "Y" ]; then
+                    echo -e "${YELLOW}Skipping to avoid overwrite${NC}"
+                    log_warning "Skipped to avoid overwrite: $new_filename"
+                    return 0
+                fi
+            fi
+
+            echo -e "Confirm rename? [Y/n]: "
+            read -r confirm
+
+            if [ "$confirm" = "n" ] || [ "$confirm" = "N" ]; then
+                echo -e "${YELLOW}Rename cancelled${NC}"
+                log_info "Rename cancelled by user: $filename"
+                return 0
+            fi
+
+            if [ "$dry_run" = "true" ]; then
+                echo -e "${CYAN}[DRY RUN] Would rename file${NC}"
+                log_info "[DRY RUN] Would rename: $filename -> $new_filename"
+            else
+                mv "$filepath" "$new_filepath"
+                if [ $? -eq 0 ]; then
+                    echo -e "${GREEN}✓ Successfully renamed!${NC}"
+                    log_success "Renamed: $filename -> $new_filename"
+                else
+                    echo -e "${RED}✗ Failed to rename file${NC}"
+                    log_error "Failed to rename: $filename"
+                    return 1
+                fi
+            fi
+            ;;
+        n|N)
+            echo -e "Enter new search term: "
+            read -r new_search
+            if [ -n "$new_search" ]; then
+                sleep 1
+                response=$(search_musicbrainz "$new_search")
+                display_music_results "$response"
+                process_music_file "$filepath" "$dry_run"
+            fi
+            ;;
+        s|S|"")
+            echo -e "${YELLOW}Skipping file${NC}"
+            log_info "Skipped: $filename (user choice)"
+            ;;
+        *)
+            echo -e "${RED}Invalid selection. Skipping.${NC}"
+            log_warning "Invalid selection for: $filename"
+            ;;
+    esac
+}
+
+#-------------------------------------------------------------------------------
 # Function: display_results
 # Shows search results and prompts for selection
 #-------------------------------------------------------------------------------
 display_results() {
     local response="$1"
     local original_file="$2"
-    
+
     local total_results=$(echo "$response" | jq '.total_results')
     
     if [ "$total_results" -eq 0 ]; then
@@ -798,8 +1068,8 @@ while [[ $# -gt 0 ]]; do
             ;;
         -m|--mode)
             MODE="$2"
-            if [[ ! "$MODE" =~ ^(auto|movies|tv)$ ]]; then
-                echo -e "${RED}Error: Invalid mode '$MODE'. Use 'auto', 'movies', or 'tv'${NC}"
+            if [[ ! "$MODE" =~ ^(auto|movies|tv|music)$ ]]; then
+                echo -e "${RED}Error: Invalid mode '$MODE'. Use 'auto', 'movies', 'tv', or 'music'${NC}"
                 exit 1
             fi
             shift 2
@@ -814,15 +1084,17 @@ done
 # Check dependencies
 check_dependencies
 
-# Check for API key
-if [ -z "$TMDB_API_KEY" ]; then
-    echo -e "${RED}Error: TMDB API key is required${NC}"
+# Check for API key (only required for movies/tv modes)
+if [ -z "$TMDB_API_KEY" ] && [ "$MODE" != "music" ]; then
+    echo -e "${RED}Error: TMDB API key is required for movies/TV mode${NC}"
     echo ""
     echo "Set your API key using one of these methods:"
     echo "  1. Environment variable: export TMDB_API_KEY=your_key"
     echo "  2. Command line flag: $0 -k your_key [directory]"
     echo ""
     echo "Get a free API key at: https://www.themoviedb.org/settings/api"
+    echo ""
+    echo "Note: Music mode (-m music) does not require an API key."
     exit 1
 fi
 
@@ -844,7 +1116,7 @@ TARGET_DIR=$(cd "$TARGET_DIR" && pwd)
 init_logging
 
 echo -e "${CYAN}╔═══════════════════════════════════════════════════════════════╗${NC}"
-echo -e "${CYAN}║              Media Renamer - TMDB Edition                     ║${NC}"
+echo -e "${CYAN}║                    Media Renamer                              ║${NC}"
 echo -e "${CYAN}╚═══════════════════════════════════════════════════════════════╝${NC}"
 echo ""
 echo -e "${BLUE}Target directory:${NC} $TARGET_DIR"
@@ -857,29 +1129,40 @@ if [ "$LOG_ENABLED" = "true" ]; then
 fi
 echo ""
 
-# Find and process video files
+# Initialize counters
 file_count=0
 movie_count=0
 tv_count=0
+music_count=0
 
-while IFS= read -r -d '' file; do
-    ((file_count++))
-    filename=$(basename "$file")
+# Process based on mode
+if [ "$MODE" = "music" ]; then
+    # Music mode - process audio files only
+    while IFS= read -r -d '' file; do
+        ((file_count++))
+        process_music_file "$file" "$DRY_RUN"
+        ((music_count++))
+    done < <(find "$TARGET_DIR" -maxdepth 1 -type f -regextype posix-extended -iregex ".*\.($AUDIO_EXTENSIONS)$" -print0 | sort -z)
 
-    # Determine how to process based on mode
-    if [ "$MODE" = "movies" ]; then
-        # Force movie mode
+elif [ "$MODE" = "movies" ]; then
+    # Movies mode - process video files as movies
+    while IFS= read -r -d '' file; do
+        ((file_count++))
         process_movie_file "$file" "$DRY_RUN"
         ((movie_count++))
-    elif [ "$MODE" = "tv" ]; then
-        # Force TV mode - try to detect season/episode, prompt if not found
+    done < <(find "$TARGET_DIR" -maxdepth 1 -type f -regextype posix-extended -iregex ".*\.($VIDEO_EXTENSIONS)$" -print0 | sort -z)
+
+elif [ "$MODE" = "tv" ]; then
+    # TV mode - process video files as TV shows
+    while IFS= read -r -d '' file; do
+        ((file_count++))
+        filename=$(basename "$file")
         tv_info=$(detect_tv_show "$filename")
         if [ $? -eq 0 ] && [ -n "$tv_info" ]; then
             show_name=$(echo "$tv_info" | cut -d'|' -f1)
             season=$(echo "$tv_info" | cut -d'|' -f2)
             episode=$(echo "$tv_info" | cut -d'|' -f3)
         else
-            # Can't detect pattern, ask user
             echo ""
             echo -e "${CYAN}═══════════════════════════════════════════════════════════════${NC}"
             echo -e "${YELLOW}Cannot detect season/episode for:${NC} $filename"
@@ -896,8 +1179,14 @@ while IFS= read -r -d '' file; do
         fi
         process_tv_file "$file" "$DRY_RUN" "$show_name" "$season" "$episode"
         ((tv_count++))
-    else
-        # Auto mode - detect based on filename pattern
+    done < <(find "$TARGET_DIR" -maxdepth 1 -type f -regextype posix-extended -iregex ".*\.($VIDEO_EXTENSIONS)$" -print0 | sort -z)
+
+else
+    # Auto mode - detect based on file type and patterns
+    # Process video files
+    while IFS= read -r -d '' file; do
+        ((file_count++))
+        filename=$(basename "$file")
         tv_info=$(detect_tv_show "$filename")
         if [ $? -eq 0 ] && [ -n "$tv_info" ]; then
             show_name=$(echo "$tv_info" | cut -d'|' -f1)
@@ -909,18 +1198,42 @@ while IFS= read -r -d '' file; do
             process_movie_file "$file" "$DRY_RUN"
             ((movie_count++))
         fi
-    fi
-done < <(find "$TARGET_DIR" -maxdepth 1 -type f -regextype posix-extended -iregex ".*\.($VIDEO_EXTENSIONS)$" -print0 | sort -z)
+    done < <(find "$TARGET_DIR" -maxdepth 1 -type f -regextype posix-extended -iregex ".*\.($VIDEO_EXTENSIONS)$" -print0 | sort -z)
+
+    # Process audio files
+    while IFS= read -r -d '' file; do
+        ((file_count++))
+        process_music_file "$file" "$DRY_RUN"
+        ((music_count++))
+    done < <(find "$TARGET_DIR" -maxdepth 1 -type f -regextype posix-extended -iregex ".*\.($AUDIO_EXTENSIONS)$" -print0 | sort -z)
+fi
 
 echo ""
 echo -e "${CYAN}═══════════════════════════════════════════════════════════════${NC}"
-echo -e "${GREEN}Done!${NC} Processed $file_count video files."
-echo -e "  Movies: $movie_count  |  TV Episodes: $tv_count"
+echo -e "${GREEN}Done!${NC} Processed $file_count files."
+if [ "$MODE" = "music" ]; then
+    echo -e "  Music: $music_count"
+elif [ "$MODE" = "movies" ]; then
+    echo -e "  Movies: $movie_count"
+elif [ "$MODE" = "tv" ]; then
+    echo -e "  TV Episodes: $tv_count"
+else
+    echo -e "  Movies: $movie_count  |  TV Episodes: $tv_count  |  Music: $music_count"
+fi
 echo -e "${CYAN}═══════════════════════════════════════════════════════════════${NC}"
 
-log_info "Session complete: $file_count files processed ($movie_count movies, $tv_count TV episodes)"
+log_info "Session complete: $file_count files processed ($movie_count movies, $tv_count TV, $music_count music)"
 
 if [ $file_count -eq 0 ]; then
-    echo -e "${YELLOW}No video files found in $TARGET_DIR${NC}"
-    echo "Supported extensions: ${VIDEO_EXTENSIONS//|/, }"
+    if [ "$MODE" = "music" ]; then
+        echo -e "${YELLOW}No audio files found in $TARGET_DIR${NC}"
+        echo "Supported extensions: ${AUDIO_EXTENSIONS//|/, }"
+    elif [ "$MODE" = "movies" ] || [ "$MODE" = "tv" ]; then
+        echo -e "${YELLOW}No video files found in $TARGET_DIR${NC}"
+        echo "Supported extensions: ${VIDEO_EXTENSIONS//|/, }"
+    else
+        echo -e "${YELLOW}No media files found in $TARGET_DIR${NC}"
+        echo "Supported video: ${VIDEO_EXTENSIONS//|/, }"
+        echo "Supported audio: ${AUDIO_EXTENSIONS//|/, }"
+    fi
 fi
