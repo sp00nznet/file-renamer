@@ -25,48 +25,44 @@ fi
 clear
 echo -e "${CYAN}╔═══════════════════════════════════════════════════════════════╗${NC}"
 echo -e "${CYAN}║                    Media Renamer                              ║${NC}"
-echo -e "${CYAN}║            Rename your movies and TV shows                    ║${NC}"
+echo -e "${CYAN}║         Rename your movies, TV shows, and music              ║${NC}"
 echo -e "${CYAN}╚═══════════════════════════════════════════════════════════════╝${NC}"
 echo ""
-
-# Check for API key
-if [ -z "$TMDB_API_KEY" ]; then
-    echo -e "${YELLOW}TMDB API key not set.${NC}"
-    echo -e "Enter your TMDB API key (or press Enter to exit):"
-    read -r api_key
-    if [ -z "$api_key" ]; then
-        echo -e "${RED}API key required. Get one free at: https://www.themoviedb.org/settings/api${NC}"
-        exit 1
-    fi
-    export TMDB_API_KEY="$api_key"
-    echo ""
-fi
 
 # Select mode
 echo -e "${GREEN}What would you like to rename?${NC}"
 echo ""
-echo "  [1] Movies only"
-echo "  [2] TV Shows only"
-echo "  [3] Auto-detect (movies and TV shows)"
-echo "  [4] Exit"
+echo "  [1] Movies"
+echo "  [2] TV Shows"
+echo "  [3] Music"
+echo "  [4] Auto-detect (all media types)"
+echo "  [5] Exit"
 echo ""
-echo -e "Select option [1-4]: "
+echo -e "Select option [1-5]: "
 read -r mode_choice
 
 case "$mode_choice" in
     1)
         MODE="movies"
+        NEEDS_API_KEY="true"
         echo -e "${CYAN}Mode: Movies${NC}"
         ;;
     2)
         MODE="tv"
+        NEEDS_API_KEY="true"
         echo -e "${CYAN}Mode: TV Shows${NC}"
         ;;
     3)
+        MODE="music"
+        NEEDS_API_KEY="false"
+        echo -e "${CYAN}Mode: Music${NC}"
+        ;;
+    4)
         MODE="auto"
+        NEEDS_API_KEY="true"
         echo -e "${CYAN}Mode: Auto-detect${NC}"
         ;;
-    4|"")
+    5|"")
         echo -e "${YELLOW}Exiting...${NC}"
         exit 0
         ;;
@@ -76,6 +72,19 @@ case "$mode_choice" in
         ;;
 esac
 echo ""
+
+# Check for API key (only needed for movies/TV)
+if [ "$NEEDS_API_KEY" = "true" ] && [ -z "$TMDB_API_KEY" ]; then
+    echo -e "${YELLOW}TMDB API key required for movies/TV.${NC}"
+    echo -e "Enter your TMDB API key (get one free at themoviedb.org):"
+    read -r api_key
+    if [ -z "$api_key" ]; then
+        echo -e "${RED}API key required for this mode.${NC}"
+        exit 1
+    fi
+    export TMDB_API_KEY="$api_key"
+    echo ""
+fi
 
 # Get directory
 echo -e "${GREEN}Enter the directory containing your media files:${NC}"
