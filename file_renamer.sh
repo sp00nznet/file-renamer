@@ -12,7 +12,7 @@
 #   - jq
 #   - TMDB API key (free at https://www.themoviedb.org/settings/api)
 #
-# Usage: ./movie_renamer.sh [options] [directory]
+# Usage: ./file_renamer.sh [options] [directory]
 #        If no directory specified, uses current directory
 #===============================================================================
 
