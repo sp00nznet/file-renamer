@@ -47,7 +47,7 @@ sudo dnf install curl jq
 
 2. Make the script executable:
    ```bash
-   chmod +x movie_renamer.sh
+   chmod +x file_renamer.sh
    ```
 
 3. Get a free TMDB API key at https://www.themoviedb.org/settings/api
@@ -55,7 +55,7 @@ sudo dnf install curl jq
 ## Usage
 
 ```bash
-./movie_renamer.sh [options] [directory]
+./file_renamer.sh [options] [directory]
 ```
 
 ### Options
@@ -77,33 +77,33 @@ sudo dnf install curl jq
 
 **Basic usage:**
 ```bash
-./movie_renamer.sh /path/to/media
+./file_renamer.sh /path/to/media
 ```
 
 **With API key:**
 ```bash
-./movie_renamer.sh -k your_api_key /path/to/media
+./file_renamer.sh -k your_api_key /path/to/media
 ```
 
 **Using environment variable:**
 ```bash
 export TMDB_API_KEY=your_api_key
-./movie_renamer.sh /path/to/media
+./file_renamer.sh /path/to/media
 ```
 
 **Dry run (preview only):**
 ```bash
-./movie_renamer.sh -d /path/to/media
+./file_renamer.sh -d /path/to/media
 ```
 
 **With logging:**
 ```bash
-./movie_renamer.sh -l rename.log /path/to/media
+./file_renamer.sh -l rename.log /path/to/media
 ```
 
 **Combined options:**
 ```bash
-./movie_renamer.sh -k your_key -l rename.log -d /path/to/media
+./file_renamer.sh -k your_key -l rename.log -d /path/to/media
 ```
 
 ## Supported File Formats
